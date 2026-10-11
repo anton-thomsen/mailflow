@@ -27,7 +27,7 @@ An event can start a run (`payment_failed`) or end one through a stop condition 
 
 **Checks out.** At a check step, mailflow asks the host app a yes/no question with a signed `POST <HOST_URL>/checks` carrying `{ check, recipientId, runId, data }`, where `data` is the data from the event that started the run. The host app answers `{ "result": true | false }` from its own data, so mailflow never decides who has paid. A failed check is retried with backoff, and after five attempts the run stops and is marked for a person to look at.
 
-**Admin access.** The host app links its admins to `/sso?token=…` with a 60-second signed token. mailflow then sets a 12-hour session cookie. mailflow doesn't keep its own list of users.
+**Admin access.** The host app links its admins to `/sso?token=…` with a 60-second signed token. mailflow then sets a one-hour session cookie, short so that removing someone's admin rights in the host app takes effect quickly. mailflow doesn't keep its own list of users.
 
 ## Workflows
 
@@ -43,9 +43,11 @@ Each recipient's progress is a **run**. A wait is a stored due time, not a sleep
 
 - A run stores a snapshot of its workflow, so editing a workflow never strands a run halfway through.
 - There is one active run per workflow and recipient, enforced with a partial unique index.
-- Workers claim due runs with a short lease, so several replicas never process the same run.
+- An event is recorded and acted on in one transaction, so a crash never leaves an event marked as seen but not applied.
+- Workers claim due runs one at a time with a short lease, so several replicas never process the same run.
 - Each email step sends **at most once**. mailflow writes a delivery row before calling Listmonk. If a crash leaves that row pending, the run stops for a person to look at instead of risking a second email.
-- A send that Listmonk refuses is retried with backoff. A missing merge field, a bad link or an unpublished template stops the run rather than sending a broken email.
+- A send that Listmonk refuses (an error answer, or no connection at all) is retried with backoff. A timeout is different: the email may have gone out, so the run stops for a person instead of retrying.
+- Host events can arrive out of order. The example workflow therefore asks the host before every email, including the first. A missing merge field, a bad link or an unpublished template stops the run rather than sending a broken email.
 
 ## Brand and templates
 

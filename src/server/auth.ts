@@ -5,7 +5,8 @@ import { readToken } from "~/domain/signing";
 import { config } from "./config";
 
 export const SESSION_COOKIE = "mf_session";
-export const SESSION_TTL_S = 12 * 3600;
+// Short, because removing someone's admin rights in the host app only takes effect when this expires.
+export const SESSION_TTL_S = 3600;
 
 export async function currentAdmin() {
   return readToken(config().MAILFLOW_SECRET, "session", (await cookies()).get(SESSION_COOKIE)?.value);

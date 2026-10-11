@@ -7,23 +7,33 @@ export const exampleWorkflow: WorkflowDefinition = {
   name: "Failed payment follow-up",
   trigger: "payment_failed",
   stopOn: ["payment_succeeded"],
+  // Every email is preceded by a check, so a payment the host already knows about (an event that
+  // arrived out of order, or was lost) never gets a failed-payment email.
   steps: [
-    { id: "first-notice", kind: "send", template: "payment-failed" },
-    { id: "wait-3d", kind: "wait", duration: { amount: 3, unit: "days" } },
     {
-      id: "paid-after-3d",
+      id: "unpaid-at-start",
       kind: "check",
       check: "payment-settled",
       yes: [],
       no: [
-        { id: "reminder", kind: "send", template: "payment-reminder" },
-        { id: "wait-4d", kind: "wait", duration: { amount: 4, unit: "days" } },
+        { id: "first-notice", kind: "send", template: "payment-failed" },
+        { id: "wait-3d", kind: "wait", duration: { amount: 3, unit: "days" } },
         {
-          id: "paid-after-7d",
+          id: "paid-after-3d",
           kind: "check",
           check: "payment-settled",
           yes: [],
-          no: [{ id: "last-notice", kind: "send", template: "payment-last-notice" }],
+          no: [
+            { id: "reminder", kind: "send", template: "payment-reminder" },
+            { id: "wait-4d", kind: "wait", duration: { amount: 4, unit: "days" } },
+            {
+              id: "paid-after-7d",
+              kind: "check",
+              check: "payment-settled",
+              yes: [],
+              no: [{ id: "last-notice", kind: "send", template: "payment-last-notice" }],
+            },
+          ],
         },
       ],
     },

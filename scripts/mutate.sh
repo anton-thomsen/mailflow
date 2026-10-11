@@ -9,6 +9,8 @@ mutants=(
   "src/domain/email.ts|return encode(value);|return value;"
   "src/server/engine.ts|cursor: result ? action.yes : action.no|cursor: action.no"
   "src/domain/signing.ts|Math.abs(now / 1000 - t) > TOLERANCE_S|false"
+  "src/server/engine.ts|if (!(e instanceof DeliveryRefused)) {|if (false) {"
+  "src/server/engine.ts|if (await tx.event.findUnique({ where: { id: event.id }, select: { id: true } })) return { duplicate: true };|"
 )
 survivors=0
 for m in "${mutants[@]}"; do

@@ -1,4 +1,5 @@
 import { config } from "./config";
+import { DeliveryRefused } from "./engine";
 
 const TEMPLATE_NAME = "mailflow-passthrough";
 let templateId: number | undefined;
@@ -14,7 +15,8 @@ async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
     signal: AbortSignal.timeout(15_000),
   });
   const text = await res.text();
-  if (!res.ok) throw new Error(`Listmonk ${init.method ?? "GET"} ${path} ${res.status}: ${text.slice(0, 300)}`);
+  if (!res.ok)
+    throw new DeliveryRefused(`Listmonk ${init.method ?? "GET"} ${path} ${res.status}: ${text.slice(0, 300)}`);
   return (JSON.parse(text) as { data: T }).data;
 }
 
@@ -39,17 +41,32 @@ async function passthroughTemplate() {
   return templateId;
 }
 
+const NEVER_CONNECTED = new Set(["ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN", "EHOSTUNREACH"]);
+
 // Resolves when Listmonk has queued the message. Listmonk gives no delivery receipt.
+// Throws DeliveryRefused only when the email certainly was not queued.
 export async function deliver(email: { to: string; subject: string; html: string }) {
-  await call("/api/tx", {
-    method: "POST",
-    body: JSON.stringify({
-      subscriber_emails: [email.to],
-      subscriber_mode: "external",
-      template_id: await passthroughTemplate(),
-      from_email: config().MAIL_FROM,
-      // Inside data, not `subject`: Listmonk would parse a subject containing "{{" as a template.
-      data: { subject: email.subject, html: email.html },
-    }),
-  });
+  let template: number;
+  try {
+    template = await passthroughTemplate();
+  } catch (e) {
+    throw e instanceof DeliveryRefused ? e : new DeliveryRefused(`template lookup failed: ${(e as Error).message}`);
+  }
+  try {
+    await call("/api/tx", {
+      method: "POST",
+      body: JSON.stringify({
+        subscriber_emails: [email.to],
+        subscriber_mode: "external",
+        template_id: template,
+        from_email: config().MAIL_FROM,
+        // Inside data, not `subject`: Listmonk would parse a subject containing "{{" as a template.
+        data: { subject: email.subject, html: email.html },
+      }),
+    });
+  } catch (e) {
+    const code = (e as { cause?: { code?: string } }).cause?.code;
+    if (code && NEVER_CONNECTED.has(code)) throw new DeliveryRefused(`Listmonk unreachable (${code})`);
+    throw e;
+  }
 }

@@ -1,7 +1,7 @@
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { DEFAULT_BRAND } from "~/domain/brand";
-import { type Deps, type HostEvent, ingestEvent, tick } from "~/server/engine";
+import { DeliveryRefused, type Deps, type HostEvent, ingestEvent, tick } from "~/server/engine";
 import { installExample } from "~/server/install";
 
 const db = new PrismaClient();
@@ -14,6 +14,7 @@ let paidFrom: Date | null;
 let checkFails: boolean;
 let deliverFails: number;
 let deliverDelayMs: number;
+let deliverTimesOut: boolean;
 
 function deps(now: () => Date = () => t0): Deps {
   return {
@@ -22,7 +23,11 @@ function deps(now: () => Date = () => t0): Deps {
     deliver: async (email) => {
       if (deliverFails > 0) {
         deliverFails--;
-        throw new Error("listmonk 500");
+        throw new DeliveryRefused("listmonk 500");
+      }
+      if (deliverTimesOut) {
+        sent.push(email);
+        throw new Error("The operation was aborted due to timeout");
       }
       if (deliverDelayMs) await new Promise((r) => setTimeout(r, deliverDelayMs));
       sent.push(email);
@@ -71,6 +76,7 @@ beforeEach(async () => {
   checkFails = false;
   deliverFails = 0;
   deliverDelayMs = 0;
+  deliverTimesOut = false;
 });
 
 afterAll(() => db.$disconnect());
@@ -116,6 +122,22 @@ describe("failed-payment workflow", () => {
     expect(run.entries.map((e) => e.detail)).toContain("payment-settled: yes");
   });
 
+  it("sends nothing when the payment succeeded before the failure event arrived", async () => {
+    paidFrom = t0;
+    await ingestEvent({ db }, succeeded, t0);
+    await ingestEvent({ db }, failed(), t0);
+    await runDays([0, 3, 7]);
+    expect(sent).toHaveLength(0);
+    expect((await theRun()).entries.map((e) => e.detail)).toContain("payment-settled: yes");
+  });
+
+  it("records one event and one run when the same event arrives twice at once", async () => {
+    const results = await Promise.all([ingestEvent({ db }, failed(), t0), ingestEvent({ db }, failed(), t0)]);
+    expect(results.filter((r) => r.duplicate)).toHaveLength(1);
+    expect(await db.event.count()).toBe(1);
+    expect(await db.run.count()).toBe(1);
+  });
+
   it("ignores a repeated event and a second failure while a run is active", async () => {
     expect(await ingestEvent({ db }, failed(), t0)).toMatchObject({ duplicate: false });
     expect(await ingestEvent({ db }, failed(), t0)).toEqual({ duplicate: true });
@@ -153,6 +175,15 @@ describe("failures", () => {
     expect(await db.delivery.findMany()).toMatchObject([{ status: "accepted", stepId: "first-notice" }]);
   });
 
+  it("never resends when Listmonk times out, because the email may have gone out", async () => {
+    deliverTimesOut = true;
+    await ingestEvent({ db }, failed(), t0);
+    await runDays([0, 1, 3]);
+    expect(sent).toHaveLength(1);
+    expect(await db.delivery.findFirstOrThrow()).toMatchObject({ status: "pending" });
+    expect((await db.run.findFirstOrThrow()).failure).toContain("may have gone out");
+  });
+
   it("never resends after an interrupted send and flags the run for a human", async () => {
     await ingestEvent({ db }, failed(), t0);
     const run = await db.run.findFirstOrThrow();
@@ -168,7 +199,7 @@ describe("failures", () => {
     });
   });
 
-  it("gives up on an unreachable host after five attempts without sending a reminder", async () => {
+  it("never emails without an answer from the host, and gives up after five attempts", async () => {
     checkFails = true;
     await ingestEvent({ db }, failed(), t0);
     let now = t0;
@@ -179,7 +210,7 @@ describe("failures", () => {
       );
       now = new Date(now.getTime() + DAY);
     }
-    expect(sent).toHaveLength(1);
+    expect(sent).toHaveLength(0);
     const run = await db.run.findFirstOrThrow();
     expect(run.status).toBe("failed");
     expect(run.failure).toContain("Gave up after 5 attempts");

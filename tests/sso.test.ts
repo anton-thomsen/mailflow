@@ -17,7 +17,7 @@ describe("sso", () => {
     const res = await GET(new Request(`http://localhost:3000/sso?token=${token()}`));
     expect(res.status).toBe(303);
     expect(res.headers.get("location")).toBe("/");
-    expect(res.headers.get("set-cookie")).toMatch(/^mf_session=.+; Path=\/; HttpOnly; SameSite=Lax; Max-Age=43200$/);
+    expect(res.headers.get("set-cookie")).toMatch(/^mf_session=.+; Path=\/; HttpOnly; SameSite=Lax; Max-Age=3600$/);
   });
 
   it("marks the cookie Secure behind an https proxy", async () => {

@@ -21,26 +21,41 @@ export interface Deps {
   check: (request: { check: string; recipientId: string; runId: string; data: MergeData }) => Promise<boolean>;
 }
 
+// Thrown by `deliver` when Listmonk definitely did not accept the email, so sending again is safe.
+// Any other error (a timeout, a dropped connection) leaves it unknown whether the email went out.
+export class DeliveryRefused extends Error {
+  override name = "DeliveryRefused";
+}
+
 const MAX_ATTEMPTS = 5;
 const LEASE_MS = 120_000;
 
 export type IngestResult = { duplicate: true } | { duplicate: false; started: string[]; stopped: string[] };
 
+// One transaction, so a crash can never record an event without also acting on it. Two concurrent
+// deliveries of the same event collide on a unique index; the retry then sees the first one's result.
 export async function ingestEvent({ db }: Pick<Deps, "db">, event: HostEvent, now = new Date()): Promise<IngestResult> {
-  try {
-    await db.event.create({
-      data: { id: event.id, type: event.type, recipientId: event.recipient.id, payload: event, receivedAt: now },
-    });
-  } catch (e) {
-    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") return { duplicate: true };
-    throw e;
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await db.$transaction((tx) => applyEvent(tx, event, now));
+    } catch (e) {
+      if (attempt < 2 && e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") continue;
+      throw e;
+    }
   }
+}
+
+async function applyEvent(tx: Prisma.TransactionClient, event: HostEvent, now: Date): Promise<IngestResult> {
+  if (await tx.event.findUnique({ where: { id: event.id }, select: { id: true } })) return { duplicate: true };
+  await tx.event.create({
+    data: { id: event.id, type: event.type, recipientId: event.recipient.id, payload: event, receivedAt: now },
+  });
 
   const stopped: string[] = [];
-  const active = await db.run.findMany({ where: { recipientId: event.recipient.id, status: "active" } });
+  const active = await tx.run.findMany({ where: { recipientId: event.recipient.id, status: "active" } });
   for (const run of active) {
     if (!parseWorkflow(run.definition).stopOn.includes(event.type)) continue;
-    await db.run.update({
+    await tx.run.update({
       where: { id: run.id },
       data: {
         status: "stopped",
@@ -53,47 +68,50 @@ export async function ingestEvent({ db }: Pick<Deps, "db">, event: HostEvent, no
   }
 
   const started: string[] = [];
-  const live = await db.workflow.findMany({ where: { status: "live" } });
+  const live = await tx.workflow.findMany({ where: { status: "live" } });
   for (const workflow of live) {
     const definition = parseWorkflow(workflow.definition);
     if (definition.trigger !== event.type) continue;
-    try {
-      const run = await db.run.create({
-        data: {
-          workflowId: workflow.id,
-          definition,
-          recipientId: event.recipient.id,
-          email: event.recipient.email,
-          data: event.data,
-          cursor: compile(definition).first,
-          dueAt: now,
-          createdAt: now,
-          entries: { create: { at: now, kind: "started", detail: `Started by ${event.type}` } },
-        },
-      });
-      started.push(run.id);
-    } catch (e) {
-      // Already in this workflow: the partial unique index keeps one active run per recipient.
-      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") continue;
-      throw e;
-    }
+    const already = await tx.run.findFirst({
+      where: { workflowId: workflow.id, recipientId: event.recipient.id, status: "active" },
+      select: { id: true },
+    });
+    if (already) continue;
+    const run = await tx.run.create({
+      data: {
+        workflowId: workflow.id,
+        definition,
+        recipientId: event.recipient.id,
+        email: event.recipient.email,
+        data: event.data,
+        cursor: compile(definition).first,
+        dueAt: now,
+        createdAt: now,
+        entries: { create: { at: now, kind: "started", detail: `Started by ${event.type}` } },
+      },
+    });
+    started.push(run.id);
   }
   return { duplicate: false, started, stopped };
 }
 
-// Claims due runs with a lease so two workers never process the same run, then drives each one
-// until it waits, finishes, or fails. Returns how many runs it touched.
-export async function tick(deps: Deps, now = new Date()): Promise<number> {
-  const claimed = await deps.db.$queryRaw<{ id: string }[]>`
-    UPDATE "Run" SET "leaseUntil" = ${new Date(now.getTime() + LEASE_MS)}
-    WHERE id IN (
-      SELECT id FROM "Run"
-      WHERE status = 'active' AND "dueAt" <= ${now} AND ("leaseUntil" IS NULL OR "leaseUntil" < ${now})
-      ORDER BY "dueAt" LIMIT 25 FOR UPDATE SKIP LOCKED
-    )
-    RETURNING id`;
-  for (const { id } of claimed) await drive(deps, id, now);
-  return claimed.length;
+// Claims one due run at a time with a fresh lease, so a slow run never lets the lease on a
+// later one expire while it waits its turn. Returns how many runs it touched.
+export async function tick(deps: Deps, now = new Date(), limit = 25): Promise<number> {
+  let touched = 0;
+  for (; touched < limit; touched++) {
+    const [claimed] = await deps.db.$queryRaw<{ id: string }[]>`
+      UPDATE "Run" SET "leaseUntil" = ${new Date(now.getTime() + LEASE_MS)}
+      WHERE id = (
+        SELECT id FROM "Run"
+        WHERE status = 'active' AND "dueAt" <= ${now} AND ("leaseUntil" IS NULL OR "leaseUntil" < ${now})
+        ORDER BY "dueAt" LIMIT 1 FOR UPDATE SKIP LOCKED
+      )
+      RETURNING id`;
+    if (!claimed) break;
+    await drive(deps, claimed.id, now);
+  }
+  return touched;
 }
 
 type Outcome =
@@ -223,12 +241,18 @@ async function send(
     return { fail: `Can't render "${action.template}": ${problems.join(", ")}` };
   }
 
-  const delivery = existing
-    ? await deps.db.delivery.update({
-        where: { id: existing.id },
-        data: { status: "pending", error: null, templateVersion: version.version, subject: rendered.subject },
-      })
-    : await deps.db.delivery.create({
+  let deliveryId: string;
+  if (existing) {
+    // Only the worker that flips failed -> pending may send; a second worker finds nothing to flip.
+    const taken = await deps.db.delivery.updateMany({
+      where: { id: existing.id, status: "failed" },
+      data: { status: "pending", error: null, templateVersion: version.version, subject: rendered.subject },
+    });
+    if (taken.count === 0) return { retry: "Another worker is sending this email" };
+    deliveryId = existing.id;
+  } else {
+    deliveryId = (
+      await deps.db.delivery.create({
         data: {
           runId: run.id,
           stepId,
@@ -237,14 +261,22 @@ async function send(
           subject: rendered.subject,
           createdAt: now,
         },
-      });
+      })
+    ).id;
+  }
   try {
     await deps.deliver({ to: run.email, subject: rendered.subject, html: rendered.html });
   } catch (e) {
-    await deps.db.delivery.update({ where: { id: delivery.id }, data: { status: "failed", error: message(e) } });
+    if (!(e instanceof DeliveryRefused)) {
+      await deps.db.delivery.update({ where: { id: deliveryId }, data: { error: message(e) } });
+      return {
+        fail: `Listmonk did not answer for "${action.template}", so the email may have gone out. Check the inbox before retrying. (${message(e)})`,
+      };
+    }
+    await deps.db.delivery.update({ where: { id: deliveryId }, data: { status: "failed", error: message(e) } });
     return { retry: `Listmonk refused "${action.template}": ${message(e)}` };
   }
-  await deps.db.delivery.update({ where: { id: delivery.id }, data: { status: "accepted" } });
+  await deps.db.delivery.update({ where: { id: deliveryId }, data: { status: "accepted" } });
   return {
     cursor: action.next,
     dueAt: now,
