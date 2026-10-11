@@ -3,16 +3,7 @@
   "$id": "https://github.com/anton-thomsen/mailflow/brand/brand.schema.json",
   "title": "mailflow brand profile",
   "type": "object",
-  "required": [
-    "name",
-    "logoText",
-    "colors",
-    "font",
-    "button",
-    "cardRadius",
-    "footer",
-    "tone"
-  ],
+  "required": ["name", "logoText", "colors", "font", "button", "cardRadius", "footer", "tone"],
   "additionalProperties": false,
   "properties": {
     "$schema": {
@@ -33,13 +24,7 @@
     },
     "colors": {
       "type": "object",
-      "required": [
-        "primary",
-        "text",
-        "muted",
-        "background",
-        "card"
-      ],
+      "required": ["primary", "text", "muted", "background", "card"],
       "additionalProperties": false,
       "properties": {
         "primary": {
@@ -64,20 +49,11 @@
       }
     },
     "font": {
-      "enum": [
-        "classic",
-        "modern",
-        "friendly",
-        "inter"
-      ],
+      "enum": ["classic", "modern", "friendly", "inter"],
       "description": "classic: Georgia + Arial; modern: Helvetica; friendly: Trebuchet + Verdana; inter: Inter web font with Arial fallback (shows only in Apple Mail)."
     },
     "button": {
-      "enum": [
-        "rounded",
-        "pill",
-        "square"
-      ]
+      "enum": ["rounded", "pill", "square"]
     },
     "cardRadius": {
       "type": "integer",

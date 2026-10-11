@@ -2,7 +2,7 @@
 
 Self-hosted email workflows for your own app. Draw a flow, write on-brand emails with AI, and let [Listmonk](https://listmonk.app) deliver them.
 
-> **Status: pre-alpha.** Nothing here runs yet. This repo holds the design, the brand profile format and the AI skills while the first version is being built.
+> **Status: early.** The failed-payment workflow runs end to end: events in, emails out through Listmonk, checks back to your app, and an admin UI. Editing workflow steps in the UI is not built yet.
 
 ## What it does
 
@@ -29,12 +29,45 @@ flowchart LR
 
 Your app stays the owner of its users and its data. mailflow owns templates, workflows, timers and the history of every run. See [docs/architecture.md](docs/architecture.md).
 
+## Run it locally
+
+```sh
+pnpm install
+docker compose -f dev/compose.yml up -d      # Postgres, Listmonk, Mailpit
+cp .env.example .env                         # fill in MAILFLOW_SECRET and LISTMONK_API_TOKEN
+docker compose -f dev/compose.yml logs listmonk | grep LISTMONK_ADMIN_API_TOKEN
+pnpm db:migrate && pnpm dev
+```
+
+Listmonk prints its API token once, on first install. Sent mail lands in Mailpit at http://127.0.0.1:58025.
+
+## Deploy
+
+Build the image from the `Dockerfile` and run it with the variables in `.env.example`. On start it applies migrations, then serves the app and runs the worker. A fresh database gets the example failed-payment workflow and templates as a **draft**, so nothing is sent until an admin sets the workflow to Live. You also need a Listmonk (v6.2 or later) with working SMTP, and an API user for mailflow.
+
+## Connect your app
+
+Your app and mailflow share `MAILFLOW_SECRET`. Every request carries `X-Mailflow-Signature: t=<unix seconds>,v1=<hex HMAC-SHA256 of "<purpose>.<t>.<body>">` and is rejected after five minutes.
+
+- **Events in.** `POST /api/events`, purpose `event`, with `{ id, type, recipient: { id, email }, data, occurredAt }`. The `id` makes retries safe.
+- **Checks out.** mailflow sends `POST <HOST_URL>/checks`, purpose `check`, with `{ check, recipientId, runId, data }`. Your app answers `{ "result": true | false }`.
+- **Admin sign-in.** Your app sends an admin to `/sso?token=<base64url(json {email, name, exp}).base64url(HMAC-SHA256 of "sso.<payload>")>`. Keep `exp` within a minute.
+
+The reference implementation of each part is in [`src/domain/signing.ts`](src/domain/signing.ts).
+
+## Develop
+
+- `pnpm test` runs the tests against the dev Postgres, in a separate `test` schema.
+- `pnpm e2e` drives three people through the failed-payment workflow, with real Listmonk delivery into Mailpit and a simulated clock.
+- `scripts/mutate.sh` breaks six core rules one at a time and expects the tests to catch each one.
+- [`docs/decisions.tsv`](docs/decisions.tsv) logs why things are built the way they are.
+
 ## Roadmap
 
-1. **Thin slice:** one hard-coded workflow (payment failed → email → wait → check → reminder), event intake, timers, Listmonk delivery, run history.
-2. **Brand + templates:** `brand.json`, block renderer (MJML), pasted HTML with brand check, preview and test send, versioned publishing.
-3. **Canvas editor:** build and edit workflows visually.
-4. **Packaging:** versioned Docker images, one-click deploy recipes.
+1. ~~**Thin slice:** the failed-payment workflow, event intake, timers, Listmonk delivery, run history.~~ Done.
+2. ~~**Brand + templates:** `brand.json`, MJML block renderer, pasted HTML with brand check, preview, test send, versioned publishing.~~ Done.
+3. **Canvas editor:** build and edit workflow steps in the canvas. Today the canvas is read-only and steps change through the database.
+4. **Packaging:** published versioned images and deploy recipes.
 
 ## Licence
 

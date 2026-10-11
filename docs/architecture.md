@@ -6,7 +6,7 @@
 | --- | --- |
 | **Host app** (the app using mailflow) | Its users, login, payment status and every other business fact. It decides who counts as an admin. |
 | **mailflow** | Brand profile, templates and their versions, workflows, timers, runs and run history. |
-| **Listmonk** | Delivery: sending, bounces and unsubscribes. |
+| **Listmonk** | Delivery over SMTP. |
 
 mailflow stores only what it needs to send: a recipient id, an email address and the merge fields a template uses (for example `first_name` and `payment_link`). It does not copy the host app's database.
 
@@ -25,21 +25,27 @@ One mailflow deployment per host app, each with its own database and Listmonk. H
 
 An event can start a run (`payment_failed`) or end one through a stop condition (`payment_succeeded`).
 
-**Checks out.** At a check step, mailflow asks the host app a yes/no question over a signed HTTP call, for example `GET /mailflow/checks/payment-settled?recipient=usr_123`. The host app answers from its own data, so mailflow never decides who has paid.
+**Checks out.** At a check step, mailflow asks the host app a yes/no question with a signed `POST <HOST_URL>/checks` carrying `{ check, recipientId, runId, data }`, where `data` is the data from the event that started the run. The host app answers `{ "result": true | false }` from its own data, so mailflow never decides who has paid. A failed check is retried with backoff, and after five attempts the run stops and is marked for a person to look at.
 
-**Admin access.** The host app links its admins to the mailflow UI with a short-lived signed token. mailflow doesn't keep its own list of users.
+**Admin access.** The host app links its admins to `/sso?token=…` with a 60-second signed token. mailflow then sets a 12-hour session cookie. mailflow doesn't keep its own list of users.
 
 ## Workflows
 
 A workflow is a trigger, a list of stop conditions and a tree of steps:
 
-- `send`: a published template version
-- `wait`: a duration
+- `send`: the latest published version of a template
+- `wait`: a number of minutes, hours or days
 - `check`: a host-app check, with a `yes` branch and a `no` branch
-- `notify`: alert a person instead of emailing the recipient
-- `end`
+
+Branches never rejoin. The end of any list ends the run.
 
 Each recipient's progress is a **run**. A wait is a stored due time, not a sleeping process, so runs survive restarts and deploys. Every step a run takes is written to its history.
+
+- A run stores a snapshot of its workflow, so editing a workflow never strands a run halfway through.
+- There is one active run per workflow and recipient, enforced with a partial unique index.
+- Workers claim due runs with a short lease, so several replicas never process the same run.
+- Each email step sends **at most once**. mailflow writes a delivery row before calling Listmonk. If a crash leaves that row pending, the run stops for a person to look at instead of risking a second email.
+- A send that Listmonk refuses is retried with backoff. A missing merge field, a bad link or an unpublished template stops the run rather than sending a broken email.
 
 ## Brand and templates
 
@@ -47,7 +53,8 @@ Each recipient's progress is a **run**. A wait is a stored due time, not a sleep
 - **Block templates** are a list of blocks (`heading`, `text`, `button`, `divider`, `small`). They are rendered with the brand through MJML, so they are on-brand by construction.
 - **HTML templates** are pasted or uploaded as-is and must pass the **brand check** before publishing:
   - warnings: colours outside the palette, fonts not in the profile, emails wider than 600px;
-  - errors that block publishing: no unsubscribe link, any script.
+  - errors that block publishing: a script, or JavaScript in an attribute or link.
+- **Unsubscribe.** Listmonk's transactional API has no unsubscribe tag. When the host app sends an `unsubscribe_url` field, block templates add the link to the footer.
 - Templates are versioned. Workflows only send **published** versions.
 
 ## AI skills

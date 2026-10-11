@@ -1,0 +1,124 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum WorkflowStatus {
+  draft
+  live
+  paused
+}
+
+model Workflow {
+  id         String         @id @default(cuid())
+  slug       String         @unique
+  status     WorkflowStatus @default(draft)
+  definition Json
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
+  runs       Run[]
+}
+
+enum RunStatus {
+  active
+  completed
+  stopped
+  failed
+}
+
+model Run {
+  id          String     @id @default(cuid())
+  workflowId  String
+  workflow    Workflow   @relation(fields: [workflowId], references: [id])
+  // Snapshot of the workflow when the run started, so editing a workflow never strands a run.
+  definition  Json
+  recipientId String
+  email       String
+  data        Json
+  status      RunStatus  @default(active)
+  cursor      String?
+  dueAt       DateTime?
+  attempts    Int        @default(0)
+  leaseUntil  DateTime?
+  failure     String?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  entries     RunEntry[]
+  deliveries  Delivery[]
+
+  @@index([status, dueAt])
+  @@index([recipientId])
+}
+
+model RunEntry {
+  id     String   @id @default(cuid())
+  runId  String
+  run    Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
+  at     DateTime @default(now())
+  kind   String
+  stepId String?
+  detail String
+
+  @@index([runId, at])
+}
+
+model Event {
+  id          String   @id
+  type        String
+  recipientId String
+  payload     Json
+  receivedAt  DateTime @default(now())
+}
+
+enum DeliveryStatus {
+  pending
+  accepted
+  failed
+}
+
+model Delivery {
+  id              String         @id @default(cuid())
+  runId           String
+  run             Run            @relation(fields: [runId], references: [id], onDelete: Cascade)
+  stepId          String
+  templateSlug    String
+  templateVersion Int
+  subject         String
+  status          DeliveryStatus @default(pending)
+  error           String?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@unique([runId, stepId])
+}
+
+model Template {
+  id        String            @id @default(cuid())
+  slug      String            @unique
+  name      String
+  createdAt DateTime          @default(now())
+  versions  TemplateVersion[]
+}
+
+model TemplateVersion {
+  id          String    @id @default(cuid())
+  templateId  String
+  template    Template  @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  version     Int
+  subject     String
+  content     Json
+  publishedAt DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@unique([templateId, version])
+}
+
+model Setting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+}

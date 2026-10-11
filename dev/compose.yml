@@ -1,0 +1,47 @@
+# Local stack for development and the end-to-end check. Not a production deployment.
+name: mailflow-dev
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: mailflow
+      POSTGRES_PASSWORD: mailflow
+      POSTGRES_DB: mailflow
+    ports: ["127.0.0.1:55432:5432"]
+    healthcheck:
+      test: pg_isready -U mailflow
+      interval: 2s
+      retries: 30
+
+  listmonk-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: listmonk
+      POSTGRES_PASSWORD: listmonk
+      POSTGRES_DB: listmonk
+    healthcheck:
+      test: pg_isready -U listmonk
+      interval: 2s
+      retries: 30
+
+  listmonk:
+    image: listmonk/listmonk:v6.2.0
+    depends_on:
+      listmonk-db: { condition: service_healthy }
+    command: [sh, -c, "./listmonk --install --idempotent --yes --config '' && ./listmonk --upgrade --yes --config '' && ./listmonk --config ''"]
+    environment:
+      LISTMONK_app__address: 0.0.0.0:9000
+      LISTMONK_db__host: listmonk-db
+      LISTMONK_db__port: 5432
+      LISTMONK_db__user: listmonk
+      LISTMONK_db__password: listmonk
+      LISTMONK_db__database: listmonk
+      LISTMONK_db__ssl_mode: disable
+      LISTMONK_ADMIN_USER: admin
+      LISTMONK_ADMIN_PASSWORD: listmonk-dev
+      LISTMONK_ADMIN_API_USER: mailflow
+    ports: ["127.0.0.1:59000:9000"]
+
+  mailpit:
+    image: axllent/mailpit:v1.27
+    ports: ["127.0.0.1:58025:8025"]
