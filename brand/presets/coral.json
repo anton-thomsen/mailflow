@@ -1,0 +1,17 @@
+{
+  "$schema": "../brand.schema.json",
+  "name": "Coral",
+  "logoText": "Your company",
+  "colors": {
+    "primary": "#d0573f",
+    "text": "#2d1f1b",
+    "muted": "#8a7670",
+    "background": "#fbf1ec",
+    "card": "#ffffff"
+  },
+  "font": "friendly",
+  "button": "pill",
+  "cardRadius": 20,
+  "footer": "Your Company Ltd \u00b7 City \u00b7 You get this email because you have an account with us.",
+  "tone": "Friendly and encouraging."
+}

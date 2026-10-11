@@ -1,0 +1,17 @@
+{
+  "$schema": "../brand.schema.json",
+  "name": "Minimal",
+  "logoText": "Your company",
+  "colors": {
+    "primary": "#111111",
+    "text": "#111111",
+    "muted": "#777777",
+    "background": "#ffffff",
+    "card": "#ffffff"
+  },
+  "font": "inter",
+  "button": "square",
+  "cardRadius": 0,
+  "footer": "Your Company Ltd \u00b7 City \u00b7 You get this email because you have an account with us.",
+  "tone": "Brief. No exclamation marks."
+}

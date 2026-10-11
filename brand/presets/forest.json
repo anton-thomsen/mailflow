@@ -1,0 +1,17 @@
+{
+  "$schema": "../brand.schema.json",
+  "name": "Forest",
+  "logoText": "Your company",
+  "colors": {
+    "primary": "#2f5d4a",
+    "text": "#1d2b24",
+    "muted": "#7a857f",
+    "background": "#f4f1ec",
+    "card": "#ffffff"
+  },
+  "font": "classic",
+  "button": "rounded",
+  "cardRadius": 12,
+  "footer": "Your Company Ltd \u00b7 City \u00b7 You get this email because you have an account with us.",
+  "tone": "Calm and warm. Short sentences. Never blame the reader. Always say what happens next."
+}

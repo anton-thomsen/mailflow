@@ -1,0 +1,17 @@
+{
+  "$schema": "../brand.schema.json",
+  "name": "Clinical blue",
+  "logoText": "Your company",
+  "colors": {
+    "primary": "#1f5fbf",
+    "text": "#14213d",
+    "muted": "#6b7686",
+    "background": "#eef3fa",
+    "card": "#ffffff"
+  },
+  "font": "modern",
+  "button": "square",
+  "cardRadius": 4,
+  "footer": "Your Company Ltd \u00b7 City \u00b7 You get this email because you have an account with us.",
+  "tone": "Clear and factual. Lead with the action."
+}

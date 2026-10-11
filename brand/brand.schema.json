@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/anton-thomsen/mailflow/brand/brand.schema.json",
+  "title": "mailflow brand profile",
+  "type": "object",
+  "required": [
+    "name",
+    "logoText",
+    "colors",
+    "font",
+    "button",
+    "cardRadius",
+    "footer",
+    "tone"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string",
+      "description": "Label shown in the admin UI."
+    },
+    "logoText": {
+      "type": "string",
+      "description": "Text wordmark shown above every email."
+    },
+    "logoUrl": {
+      "type": "string",
+      "format": "uri",
+      "description": "Optional hosted logo image; replaces logoText when set."
+    },
+    "colors": {
+      "type": "object",
+      "required": [
+        "primary",
+        "text",
+        "muted",
+        "background",
+        "card"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "primary": {
+          "$ref": "#/$defs/hex",
+          "description": "Buttons and logo."
+        },
+        "text": {
+          "$ref": "#/$defs/hex"
+        },
+        "muted": {
+          "$ref": "#/$defs/hex",
+          "description": "Small print and footer."
+        },
+        "background": {
+          "$ref": "#/$defs/hex",
+          "description": "Page behind the card."
+        },
+        "card": {
+          "$ref": "#/$defs/hex",
+          "description": "Content card."
+        }
+      }
+    },
+    "font": {
+      "enum": [
+        "classic",
+        "modern",
+        "friendly",
+        "inter"
+      ],
+      "description": "classic: Georgia + Arial; modern: Helvetica; friendly: Trebuchet + Verdana; inter: Inter web font with Arial fallback (shows only in Apple Mail)."
+    },
+    "button": {
+      "enum": [
+        "rounded",
+        "pill",
+        "square"
+      ]
+    },
+    "cardRadius": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 24
+    },
+    "footer": {
+      "type": "string",
+      "description": "Sender details. An unsubscribe link is always appended."
+    },
+    "tone": {
+      "type": "string",
+      "description": "Writing guidance the AI skills follow."
+    }
+  },
+  "$defs": {
+    "hex": {
+      "type": "string",
+      "pattern": "^#[0-9a-fA-F]{6}$"
+    }
+  }
+}
